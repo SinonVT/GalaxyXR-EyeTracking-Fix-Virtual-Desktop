@@ -1,0 +1,79 @@
+name: Build and release
+
+on:
+  # Pushing a tag like v1.0.0 builds the DLL and publishes a GitHub Release.
+  push:
+    tags:
+      - "v*"
+  # "Run workflow" button in the Actions tab: builds and uploads the DLL as a
+  # downloadable artifact only (no release).
+  workflow_dispatch:
+
+permissions:
+  contents: write   # needed to create releases and upload assets
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Build
+        run: dotnet build VirtualDesktop.FaceTracking.csproj -c Release
+
+      - name: Collect output
+        id: collect
+        shell: pwsh
+        run: |
+          $dll = Get-ChildItem -Path . -Recurse -Filter "VirtualDesktop.FaceTracking.dll" |
+                 Where-Object { $_.FullName -match "[\\/]bin[\\/]Release[\\/]" } |
+                 Sort-Object LastWriteTime -Descending |
+                 Select-Object -First 1
+          if (-not $dll) { throw "VirtualDesktop.FaceTracking.dll was not found in any bin/Release folder." }
+          Write-Host "Found: $($dll.FullName)"
+
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Copy-Item $dll.FullName dist/VirtualDesktop.FaceTracking.dll
+          if (Test-Path module.json) { Copy-Item module.json dist/module.json }
+
+          # Zip with the DLL (and module.json if present)
+          $items = @("dist/VirtualDesktop.FaceTracking.dll")
+          if (Test-Path dist/module.json) { $items += "dist/module.json" }
+          Compress-Archive -Path $items -DestinationPath dist/VirtualDesktop.VRCFaceTracking.zip -Force
+
+          # Checksum
+          $hash = (Get-FileHash dist/VirtualDesktop.FaceTracking.dll -Algorithm SHA256).Hash.ToLower()
+          "SHA-256 of VirtualDesktop.FaceTracking.dll: $hash" | Out-File -Encoding ascii dist/SHA256.txt
+          "hash=$hash" >> $env:GITHUB_OUTPUT
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: VirtualDesktop.FaceTracking
+          path: dist/*
+
+      - name: Publish release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/VirtualDesktop.FaceTracking.dll
+            dist/VirtualDesktop.VRCFaceTracking.zip
+            dist/SHA256.txt
+          fail_on_unmatched_files: true
+          generate_release_notes: true
+          body: |
+            Install: close VRCFaceTracking, then put `VirtualDesktop.FaceTracking.dll` in
+            `%AppData%\VRCFaceTracking\CustomLibs\91a90618-b020-4064-8832-809b2ca2b3bc\`
+            (the filename must stay exactly `VirtualDesktop.FaceTracking.dll`).
+
+            SHA-256: `${{ steps.collect.outputs.hash }}`
