@@ -170,8 +170,8 @@ namespace VirtualDesktop.FaceTracking
         {
             #region Eye Data to UnifiedEye
 
-            eye.Right.Gaze = orientationR.Cartesian();
-            eye.Left.Gaze = orientationL.Cartesian();
+            eye.Right.Gaze = GazeFix.FromDirection(orientationR);
+            eye.Left.Gaze  = GazeFix.FromDirection(orientationL);
 
             // Eye dilation code, automated process maybe?
             eye.Left.PupilDiameter_MM = 5f;
